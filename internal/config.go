@@ -7,7 +7,8 @@ import (
 )
 
 type Config struct {
-	Port string
+	Port     string
+	ProxyURL string
 }
 
 var Cfg *Config
@@ -21,6 +22,7 @@ func LoadConfig() {
 	}
 
 	Cfg = &Config{
-		Port: port,
+		Port:     port,
+		ProxyURL: os.Getenv("PROXY_URL"),
 	}
 }

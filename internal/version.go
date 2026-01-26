@@ -20,7 +20,8 @@ func GetFeVersion() string {
 }
 
 func fetchFeVersion() {
-	resp, err := http.Get("https://chat.z.ai/")
+	client := GetProxyClient()
+	resp, err := client.Get("https://chat.z.ai/")
 	if err != nil {
 		LogError("Failed to fetch fe version: %v", err)
 		return

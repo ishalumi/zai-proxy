@@ -48,6 +48,7 @@ docker run -d -p 8080:8000 -e LOG_LEVEL=debug ghcr.io/kao0312/zai-proxy:latest
 |--------|------|--------|
 | PORT | 监听端口 | 8000 |
 | LOG_LEVEL | 日志级别 | info |
+| PROXY_URL | HTTP 代理地址 | 空 |
 
 ## 获取 z.ai Token
 

@@ -1,0 +1,14 @@
+services:
+  zai-proxy:
+    image: ghcr.io/ishalumi/zai-proxy:latest
+    container_name: zai-proxy
+    restart: unless-stopped
+    environment:
+      - PROXY_URL=http://mihomo:7890
+      - LOG_LEVEL=info
+    networks:
+      - 1panel-network
+
+networks:
+  1panel-network:
+    external: true

@@ -139,7 +139,7 @@ func makeUpstreamRequest(token string, messages []Message, model string) (*http.
 	req.Header.Set("Referer", fmt.Sprintf("https://chat.z.ai/c/%s", uuid.New().String()))
 	req.Header.Set("User-Agent", uarand.GetRandom())
 
-	client := GetProxyClient()
+	client := GetStickyProxyClient(token)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", err

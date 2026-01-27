@@ -4,6 +4,7 @@ services:
     container_name: zai-proxy
     restart: unless-stopped
     environment:
+      - PORT=8001
       - PROXY_URL=http://mihomo:7890
       - LOG_LEVEL=info
     networks:

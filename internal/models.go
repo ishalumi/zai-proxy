@@ -9,6 +9,7 @@ import (
 
 // 基础模型映射（不包含标签后缀）
 var BaseModelMapping = map[string]string{
+	"GLM-5":        "glm-5",
 	"GLM-4.5":      "0727-360B-API",
 	"GLM-4.6":      "GLM-4-6-API-V1",
 	"GLM-4.7":      "glm-4.7",
@@ -20,6 +21,10 @@ var BaseModelMapping = map[string]string{
 
 // v1/models 返回的模型列表（不包含所有标签组合）
 var ModelList = []string{
+	"GLM-5",
+	"GLM-5-thinking",
+	"GLM-5-search",
+	"GLM-5-thinking-search",
 	"GLM-4.5",
 	"GLM-4.6",
 	"GLM-4.7",
@@ -70,7 +75,7 @@ func GetTargetModel(model string) string {
 	if target, ok := BaseModelMapping[baseModel]; ok {
 		return target
 	}
-	return model
+	return baseModel
 }
 
 // OpenAI 格式的消息内容项
@@ -384,8 +389,22 @@ func IsSearchToolCall(editContent string, phase string) bool {
 	if phase != "tool_call" {
 		return false
 	}
-	// tool_call 阶段包含 mcp 相关内容的都跳过
-	return strings.Contains(editContent, `"mcp"`) || strings.Contains(editContent, `mcp-server`)
+	return IsToolCallPayload(editContent)
+}
+
+func IsToolCallPayload(editContent string) bool {
+	if editContent == "" {
+		return false
+	}
+
+	// 兼容新版工具调用标记：glm_block / mcp / function_call / tool_calls
+	return strings.Contains(editContent, "<glm_block") ||
+		strings.Contains(editContent, `"mcp"`) ||
+		strings.Contains(editContent, `"mcp_server"`) ||
+		strings.Contains(editContent, `mcp-server`) ||
+		strings.Contains(editContent, `"tool_call_name"`) ||
+		strings.Contains(editContent, `"tool_calls"`) ||
+		strings.Contains(editContent, `"function_call"`)
 }
 
 type ImageSearchResult struct {

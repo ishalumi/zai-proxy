@@ -433,7 +433,7 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 			}
 			continue
 		}
-		if editContent != "" && strings.Contains(editContent, `"mcp"`) {
+		if editContent != "" && IsToolCallPayload(editContent) {
 			textBeforeBlock := ExtractTextBeforeGlmBlock(editContent)
 			if textBeforeBlock != "" {
 				textBeforeBlock = searchRefFilter.Process(textBeforeBlock)
@@ -740,7 +740,7 @@ func handleNonStreamResponse(w http.ResponseWriter, body io.ReadCloser, completi
 			}
 			continue
 		}
-		if editContent != "" && strings.Contains(editContent, `"mcp"`) {
+		if editContent != "" && IsToolCallPayload(editContent) {
 			textBeforeBlock := ExtractTextBeforeGlmBlock(editContent)
 			if textBeforeBlock != "" {
 				chunks = append(chunks, textBeforeBlock)

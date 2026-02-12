@@ -75,6 +75,7 @@ curl http://localhost:8000/v1/chat/completions \
 
 | 模型名称 | 上游模型 |
 |----------|----------|
+| GLM-5 | glm-5 |
 | GLM-4.5 | 0727-360B-API |
 | GLM-4.6 | GLM-4-6-API-V1 |
 | GLM-4.7 | glm-4.7 |
@@ -92,6 +93,8 @@ curl http://localhost:8000/v1/chat/completions \
 
 示例：
 
+- `GLM-5-search`
+- `GLM-5-thinking-search`
 - `GLM-4.7-thinking`
 - `GLM-4.7-search`
 - `GLM-4.7-thinking-search`

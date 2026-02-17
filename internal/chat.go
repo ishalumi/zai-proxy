@@ -33,7 +33,7 @@ func extractAllImageURLs(messages []Message) []string {
 	return allImageURLs
 }
 
-func makeUpstreamRequest(token string, messages []Message, model string) (*http.Response, string, error) {
+func makeUpstreamRequest(token string, messages []Message, model string, tools []ToolDefinition, toolChoice interface{}) (*http.Response, string, error) {
 	payload, err := DecodeJWTPayload(token)
 	if err != nil || payload == nil {
 		return nil, "", fmt.Errorf("invalid token")
@@ -92,8 +92,9 @@ func makeUpstreamRequest(token string, messages []Message, model string) (*http.
 		}
 	}
 
+	preprocessedMessages := preprocessMessagesForTools(messages, tools, toolChoice)
 	var upstreamMessages []map[string]interface{}
-	for _, msg := range messages {
+	for _, msg := range preprocessedMessages {
 		upstreamMessages = append(upstreamMessages, msg.ToUpstreamMessage(urlToFileID))
 	}
 
@@ -116,6 +117,10 @@ func makeUpstreamRequest(token string, messages []Message, model string) (*http.
 
 	if len(mcpServers) > 0 {
 		body["mcp_servers"] = mcpServers
+	}
+
+	if len(tools) > 0 {
+		body["tools"] = tools
 	}
 
 	if len(filesData) > 0 {
@@ -284,7 +289,7 @@ func HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		req.Model = "GLM-4.6"
 	}
 
-	resp, modelName, err := makeUpstreamRequest(token, req.Messages, req.Model)
+	resp, modelName, err := makeUpstreamRequest(token, req.Messages, req.Model, req.Tools, req.ToolChoice)
 	if err != nil {
 		LogError("Upstream request failed: %v", err)
 		http.Error(w, "Upstream error", http.StatusBadGateway)
@@ -304,15 +309,16 @@ func HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	completionID := fmt.Sprintf("chatcmpl-%s", uuid.New().String()[:29])
+	hasFunctionCalling := len(req.Tools) > 0
 
 	if req.Stream {
-		handleStreamResponse(w, resp.Body, completionID, modelName)
+		handleStreamResponse(w, resp.Body, completionID, modelName, hasFunctionCalling)
 	} else {
-		handleNonStreamResponse(w, resp.Body, completionID, modelName)
+		handleNonStreamResponse(w, resp.Body, completionID, modelName, hasFunctionCalling)
 	}
 }
 
-func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionID, modelName string) {
+func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionID, modelName string, hasFunctionCalling bool) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -331,6 +337,9 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 	pendingSourcesMarkdown := ""
 	pendingImageSearchMarkdown := ""
 	totalContentOutputLength := 0 // 记录已输出的 content 字符长度
+	collectedToolCalls := make([]ToolCall, 0)
+	answerText := ""
+	emittedAnswerChars := 0
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -343,6 +352,10 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 		payload := strings.TrimPrefix(line, "data: ")
 		if payload == "[DONE]" {
 			break
+		}
+
+		if toolCalls := ExtractToolCallsFromPayload(payload); len(toolCalls) > 0 {
+			collectedToolCalls = MergeToolCalls(collectedToolCalls, toolCalls)
 		}
 
 		var upstream UpstreamData
@@ -600,9 +613,27 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 			continue
 		}
 
+		rawContent := content
+		if hasFunctionCalling {
+			answerText += content
+			safeDelta, newEmitted, _ := DrainSafeAnswerDelta(answerText, emittedAnswerChars, true, FunctionCallTriggerSignal)
+			emittedAnswerChars = newEmitted
+			content = safeDelta
+			if content == "" {
+				if upstream.Data.Phase == "answer" && upstream.Data.DeltaContent != "" {
+					totalContentOutputLength += len([]rune(rawContent))
+				}
+				continue
+			}
+		}
+
 		hasContent = true
 		if upstream.Data.Phase == "answer" && upstream.Data.DeltaContent != "" {
-			totalContentOutputLength += len([]rune(content))
+			if hasFunctionCalling {
+				totalContentOutputLength += len([]rune(rawContent))
+			} else {
+				totalContentOutputLength += len([]rune(content))
+			}
 		}
 
 		chunk := ChatCompletionChunk{
@@ -627,21 +658,102 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 	}
 
 	if remaining := searchRefFilter.Flush(); remaining != "" {
+		if hasFunctionCalling {
+			answerText += remaining
+			safeRemaining, newEmitted, _ := DrainSafeAnswerDelta(answerText, emittedAnswerChars, true, FunctionCallTriggerSignal)
+			emittedAnswerChars = newEmitted
+			remaining = safeRemaining
+		}
+		if remaining != "" {
+			hasContent = true
+			chunk := ChatCompletionChunk{
+				ID:      completionID,
+				Object:  "chat.completion.chunk",
+				Created: time.Now().Unix(),
+				Model:   modelName,
+				Choices: []Choice{{
+					Index:        0,
+					Delta:        Delta{Content: remaining},
+					FinishReason: nil,
+				}},
+			}
+			data, _ := json.Marshal(chunk)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
+
+	if hasFunctionCalling {
+		if parsedToolCalls, prefixPos := ParseFunctionCallsXML(answerText); len(parsedToolCalls) > 0 {
+			if prefixPos > emittedAnswerChars {
+				prefixDelta := answerText[emittedAnswerChars:prefixPos]
+				if prefixDelta != "" {
+					hasContent = true
+					chunk := ChatCompletionChunk{
+						ID:      completionID,
+						Object:  "chat.completion.chunk",
+						Created: time.Now().Unix(),
+						Model:   modelName,
+						Choices: []Choice{{
+							Index:        0,
+							Delta:        Delta{Content: prefixDelta},
+							FinishReason: nil,
+						}},
+					}
+					data, _ := json.Marshal(chunk)
+					fmt.Fprintf(w, "data: %s\n\n", data)
+					flusher.Flush()
+				}
+			}
+			collectedToolCalls = MergeToolCalls(collectedToolCalls, parsedToolCalls)
+		}
+	}
+
+	if len(collectedToolCalls) > 0 {
 		hasContent = true
-		chunk := ChatCompletionChunk{
+		for i, toolCall := range collectedToolCalls {
+			fn := toolCall.Function
+			toolChunk := ChatCompletionChunk{
+				ID:      completionID,
+				Object:  "chat.completion.chunk",
+				Created: time.Now().Unix(),
+				Model:   modelName,
+				Choices: []Choice{{
+					Index: 0,
+					Delta: Delta{
+						ToolCalls: []ToolCallDelta{{
+							Index:    i,
+							ID:       toolCall.ID,
+							Type:     toolCall.Type,
+							Function: &fn,
+						}},
+					},
+					FinishReason: nil,
+				}},
+			}
+			data, _ := json.Marshal(toolChunk)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+
+		toolCallReason := "tool_calls"
+		finalChunk := ChatCompletionChunk{
 			ID:      completionID,
 			Object:  "chat.completion.chunk",
 			Created: time.Now().Unix(),
 			Model:   modelName,
 			Choices: []Choice{{
 				Index:        0,
-				Delta:        Delta{Content: remaining},
-				FinishReason: nil,
+				Delta:        Delta{},
+				FinishReason: &toolCallReason,
 			}},
 		}
-		data, _ := json.Marshal(chunk)
+
+		data, _ := json.Marshal(finalChunk)
 		fmt.Fprintf(w, "data: %s\n\n", data)
+		fmt.Fprintf(w, "data: [DONE]\n\n")
 		flusher.Flush()
+		return
 	}
 
 	if !hasContent {
@@ -667,11 +779,12 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 	flusher.Flush()
 }
 
-func handleNonStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionID, modelName string) {
+func handleNonStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionID, modelName string, hasFunctionCalling bool) {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 	var chunks []string
 	var reasoningChunks []string
+	collectedToolCalls := make([]ToolCall, 0)
 	thinkingFilter := &ThinkingFilter{}
 	searchRefFilter := NewSearchRefFilter()
 	hasThinking := false
@@ -687,6 +800,10 @@ func handleNonStreamResponse(w http.ResponseWriter, body io.ReadCloser, completi
 		payload := strings.TrimPrefix(line, "data: ")
 		if payload == "[DONE]" {
 			break
+		}
+
+		if toolCalls := ExtractToolCallsFromPayload(payload); len(toolCalls) > 0 {
+			collectedToolCalls = MergeToolCalls(collectedToolCalls, toolCalls)
 		}
 
 		var upstream UpstreamData
@@ -797,11 +914,30 @@ func handleNonStreamResponse(w http.ResponseWriter, body io.ReadCloser, completi
 	fullReasoning := strings.Join(reasoningChunks, "")
 	fullReasoning = searchRefFilter.Process(fullReasoning) + searchRefFilter.Flush()
 
+	if hasFunctionCalling {
+		if parsedToolCalls, prefixPos := ParseFunctionCallsXML(fullContent); len(parsedToolCalls) > 0 {
+			if prefixPos >= 0 && prefixPos <= len(fullContent) {
+				fullContent = strings.TrimRight(fullContent[:prefixPos], "\n")
+			}
+			collectedToolCalls = MergeToolCalls(collectedToolCalls, parsedToolCalls)
+		}
+	}
+
 	if fullContent == "" {
 		LogError("Non-stream response 200 but no content received")
 	}
 
 	stopReason := "stop"
+	if len(collectedToolCalls) > 0 {
+		stopReason = "tool_calls"
+	}
+
+	var contentPtr *string
+	if fullContent != "" || len(collectedToolCalls) == 0 {
+		contentCopy := fullContent
+		contentPtr = &contentCopy
+	}
+
 	response := ChatCompletionResponse{
 		ID:      completionID,
 		Object:  "chat.completion",
@@ -811,8 +947,9 @@ func handleNonStreamResponse(w http.ResponseWriter, body io.ReadCloser, completi
 			Index: 0,
 			Message: &MessageResp{
 				Role:             "assistant",
-				Content:          fullContent,
+				Content:          contentPtr,
 				ReasoningContent: fullReasoning,
+				ToolCalls:        collectedToolCalls,
 			},
 			FinishReason: &stopReason,
 		}},

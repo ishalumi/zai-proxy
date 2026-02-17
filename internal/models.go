@@ -91,8 +91,40 @@ type ImageURL struct {
 
 // Message 支持纯文本和多模态内容
 type Message struct {
-	Role    string      `json:"role"`
-	Content interface{} `json:"content"` // string 或 []ContentPart
+	Role       string      `json:"role"`
+	Content    interface{} `json:"content"` // string 或 []ContentPart
+	Name       string      `json:"name,omitempty"`
+	ToolCallID string      `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+}
+
+type ToolDefinition struct {
+	Type     string             `json:"type"`
+	Function FunctionDefinition `json:"function"`
+}
+
+type FunctionDefinition struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	Parameters  map[string]interface{} `json:"parameters,omitempty"`
+}
+
+type ToolCall struct {
+	ID       string           `json:"id,omitempty"`
+	Type     string           `json:"type,omitempty"`
+	Function ToolCallFunction `json:"function"`
+}
+
+type ToolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type ToolCallDelta struct {
+	Index    int               `json:"index"`
+	ID       string            `json:"id,omitempty"`
+	Type     string            `json:"type,omitempty"`
+	Function *ToolCallFunction `json:"function,omitempty"`
 }
 
 // 解析消息内容，返回文本和图片URL列表
@@ -159,9 +191,11 @@ func (m *Message) ToUpstreamMessage(urlToFileID map[string]string) map[string]in
 }
 
 type ChatRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
-	Stream   bool      `json:"stream"`
+	Model      string           `json:"model"`
+	Messages   []Message        `json:"messages"`
+	Stream     bool             `json:"stream"`
+	Tools      []ToolDefinition `json:"tools,omitempty"`
+	ToolChoice interface{}      `json:"tool_choice,omitempty"`
 }
 
 type ChatCompletionChunk struct {
@@ -180,14 +214,16 @@ type Choice struct {
 }
 
 type Delta struct {
-	Content          string `json:"content,omitempty"`
-	ReasoningContent string `json:"reasoning_content,omitempty"`
+	Content          string          `json:"content,omitempty"`
+	ReasoningContent string          `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCallDelta `json:"tool_calls,omitempty"`
 }
 
 type MessageResp struct {
-	Role             string `json:"role"`
-	Content          string `json:"content"`
-	ReasoningContent string `json:"reasoning_content,omitempty"`
+	Role             string     `json:"role"`
+	Content          *string    `json:"content"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 }
 
 type ChatCompletionResponse struct {

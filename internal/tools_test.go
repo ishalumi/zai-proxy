@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestPreprocessMessagesForTools(t *testing.T) {
@@ -110,6 +111,23 @@ func TestDrainSafeAnswerDelta(t *testing.T) {
 	}
 	if emitted != len("前缀内容") {
 		t.Fatalf("emitted = %d, want %d", emitted, len("前缀内容"))
+	}
+}
+
+func TestDrainSafeAnswerDeltaUTF8Boundary(t *testing.T) {
+	answer := "中文A"
+	delta, emitted, hasTrigger := DrainSafeAnswerDelta(answer, 0, true, "abc")
+	if hasTrigger {
+		t.Fatalf("hasTrigger = true, want false")
+	}
+	if !utf8.ValidString(delta) {
+		t.Fatalf("delta is not valid utf8: %q", delta)
+	}
+	if delta != "中" {
+		t.Fatalf("delta = %q, want 中", delta)
+	}
+	if emitted != len("中") {
+		t.Fatalf("emitted = %d, want %d", emitted, len("中"))
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -71,10 +72,13 @@ func makeUpstreamRequest(token string, messages []Message, model string, tools [
 	urlToFileID := make(map[string]string)
 	var filesData []map[string]interface{}
 	if len(imageURLs) > 0 {
-		files, _ := UploadImages(token, imageURLs)
-		for i, f := range files {
-			if i < len(imageURLs) {
-				urlToFileID[imageURLs[i]] = f.ID
+		files, err := UploadImages(token, imageURLs)
+		if err != nil {
+			return nil, "", err
+		}
+		for _, f := range files {
+			if f.SourceURL != "" {
+				urlToFileID[f.SourceURL] = f.ID
 			}
 			filesData = append(filesData, map[string]interface{}{
 				"type":            f.Type,
@@ -292,6 +296,10 @@ func HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	resp, modelName, err := makeUpstreamRequest(token, req.Messages, req.Model, req.Tools, req.ToolChoice)
 	if err != nil {
 		LogError("Upstream request failed: %v", err)
+		if errors.Is(err, ErrImageUploadUnauthorized) {
+			http.Error(w, "Image upload unauthorized for current token. Please use a token with file-upload permission.", http.StatusUnauthorized)
+			return
+		}
 		http.Error(w, "Upstream error", http.StatusBadGateway)
 		return
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -341,7 +342,27 @@ func DrainSafeAnswerDelta(answerText string, emittedChars int, hasFunctionCallin
 		return "", emittedChars, hasTrigger
 	}
 
+	emittedChars = clampUTF8Boundary(answerText, emittedChars)
+	safeEnd = clampUTF8Boundary(answerText, safeEnd)
+	if safeEnd <= emittedChars {
+		return "", emittedChars, hasTrigger
+	}
+
 	return answerText[emittedChars:safeEnd], safeEnd, hasTrigger
+}
+
+func clampUTF8Boundary(s string, idx int) int {
+	if idx <= 0 {
+		return 0
+	}
+	if idx >= len(s) {
+		return len(s)
+	}
+
+	for idx > 0 && !utf8.ValidString(s[:idx]) {
+		idx--
+	}
+	return idx
 }
 
 func findLastTriggerSignalOutsideThink(text, triggerSignal string) int {

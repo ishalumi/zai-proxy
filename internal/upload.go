@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -13,6 +14,17 @@ import (
 
 	"github.com/google/uuid"
 )
+
+var ErrImageUploadUnauthorized = errors.New("image upload unauthorized")
+
+type UploadHTTPError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *UploadHTTPError) Error() string {
+	return fmt.Sprintf("upload failed: status %d, body: %s", e.StatusCode, e.Body)
+}
 
 // FileUploadResponse z.ai 文件上传响应
 type FileUploadResponse struct {
@@ -39,6 +51,8 @@ type UpstreamFile struct {
 	Error  string             `json:"error"`
 	ItemID string             `json:"itemId"`
 	Media  string             `json:"media"`
+
+	SourceURL string `json:"-"`
 }
 
 // UploadImageFromURL 从 URL 或 base64 上传图片到 z.ai
@@ -153,7 +167,14 @@ func UploadImageFromURL(token string, imageURL string) (*UpstreamFile, error) {
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("upload failed: status %d, body: %s", resp.StatusCode, string(body))
+		bodyStr := string(body)
+		if len(bodyStr) > 500 {
+			bodyStr = bodyStr[:500]
+		}
+		return nil, &UploadHTTPError{
+			StatusCode: resp.StatusCode,
+			Body:       bodyStr,
+		}
 	}
 
 	var uploadResp FileUploadResponse
@@ -179,13 +200,37 @@ func UploadImageFromURL(token string, imageURL string) (*UpstreamFile, error) {
 // UploadImages 批量上传图片
 func UploadImages(token string, imageURLs []string) ([]*UpstreamFile, error) {
 	var files []*UpstreamFile
+	var firstErr error
+	failedCount := 0
+	unauthorizedCount := 0
+
 	for _, url := range imageURLs {
 		file, err := UploadImageFromURL(token, url)
 		if err != nil {
 			LogError("Failed to upload image %s: %v", url[:min(50, len(url))], err)
+			failedCount++
+			if firstErr == nil {
+				firstErr = err
+			}
+			var httpErr *UploadHTTPError
+			if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusUnauthorized {
+				unauthorizedCount++
+			}
 			continue
 		}
+		file.SourceURL = url
 		files = append(files, file)
 	}
+
+	if len(imageURLs) > 0 && len(files) == 0 {
+		if unauthorizedCount == failedCount && failedCount > 0 {
+			return nil, fmt.Errorf("%w: token has no permission for file upload", ErrImageUploadUnauthorized)
+		}
+		if firstErr != nil {
+			return nil, fmt.Errorf("all image uploads failed: %w", firstErr)
+		}
+		return nil, fmt.Errorf("all image uploads failed")
+	}
+
 	return files, nil
 }

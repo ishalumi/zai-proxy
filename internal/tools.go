@@ -351,6 +351,25 @@ func DrainSafeAnswerDelta(answerText string, emittedChars int, hasFunctionCallin
 	return answerText[emittedChars:safeEnd], safeEnd, hasTrigger
 }
 
+func DrainSafeAnswerTail(answerText string, emittedChars int, triggerSignal string) (string, int) {
+	if emittedChars >= len(answerText) {
+		return "", emittedChars
+	}
+
+	tailEnd := len(answerText)
+	if triggerPos := findLastTriggerSignalOutsideThink(answerText, triggerSignal); triggerPos >= 0 && triggerPos < tailEnd {
+		tailEnd = triggerPos
+	}
+
+	start := clampUTF8Boundary(answerText, emittedChars)
+	end := clampUTF8Boundary(answerText, tailEnd)
+	if end <= start {
+		return "", start
+	}
+
+	return answerText[start:end], end
+}
+
 func clampUTF8Boundary(s string, idx int) int {
 	if idx <= 0 {
 		return 0

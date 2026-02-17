@@ -330,6 +330,7 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -338,7 +339,7 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 	}
 
 	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 1024*1024), 8*1024*1024)
 	hasContent := false
 	searchRefFilter := NewSearchRefFilter()
 	thinkingFilter := &ThinkingFilter{}
@@ -691,8 +692,10 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 		}
 	}
 
+	hasParsedXMLToolCalls := false
 	if hasFunctionCalling {
 		if parsedToolCalls, prefixPos := ParseFunctionCallsXML(answerText); len(parsedToolCalls) > 0 {
+			hasParsedXMLToolCalls = true
 			if prefixPos > emittedAnswerChars {
 				prefixDelta := answerText[emittedAnswerChars:prefixPos]
 				if prefixDelta != "" {
@@ -714,6 +717,28 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 				}
 			}
 			collectedToolCalls = MergeToolCalls(collectedToolCalls, parsedToolCalls)
+		}
+
+		if !hasParsedXMLToolCalls {
+			tailDelta, newEnd := DrainSafeAnswerTail(answerText, emittedAnswerChars, FunctionCallTriggerSignal)
+			emittedAnswerChars = newEnd
+			if tailDelta != "" {
+				hasContent = true
+				chunk := ChatCompletionChunk{
+					ID:      completionID,
+					Object:  "chat.completion.chunk",
+					Created: time.Now().Unix(),
+					Model:   modelName,
+					Choices: []Choice{{
+						Index:        0,
+						Delta:        Delta{Content: tailDelta},
+						FinishReason: nil,
+					}},
+				}
+				data, _ := json.Marshal(chunk)
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				flusher.Flush()
+			}
 		}
 	}
 
@@ -789,7 +814,7 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 
 func handleNonStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionID, modelName string, hasFunctionCalling bool) {
 	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 1024*1024), 8*1024*1024)
 	var chunks []string
 	var reasoningChunks []string
 	collectedToolCalls := make([]ToolCall, 0)

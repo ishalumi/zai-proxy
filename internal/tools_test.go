@@ -131,6 +131,30 @@ func TestDrainSafeAnswerDeltaUTF8Boundary(t *testing.T) {
 	}
 }
 
+func TestDrainSafeAnswerTailWithoutTrigger(t *testing.T) {
+	answer := "中文ABC"
+	start := len("中文")
+	delta, end := DrainSafeAnswerTail(answer, start, "<Function_Test_Start/>")
+	if delta != "ABC" {
+		t.Fatalf("delta = %q, want ABC", delta)
+	}
+	if end != len(answer) {
+		t.Fatalf("end = %d, want %d", end, len(answer))
+	}
+}
+
+func TestDrainSafeAnswerTailWithTrigger(t *testing.T) {
+	answer := "前缀文本<Function_Test_Start/><function_calls></function_calls>"
+	start := 0
+	delta, end := DrainSafeAnswerTail(answer, start, "<Function_Test_Start/>")
+	if delta != "前缀文本" {
+		t.Fatalf("delta = %q, want 前缀文本", delta)
+	}
+	if end != len("前缀文本") {
+		t.Fatalf("end = %d, want %d", end, len("前缀文本"))
+	}
+}
+
 func TestExtractToolCallsFromPayload(t *testing.T) {
 	payload := `{"data":{"phase":"tool_call"},"tool_calls":[{"id":"call_1","type":"function","function":{"name":"weather","arguments":"{\"city\":\"beijing\"}"}}]}`
 	calls := ExtractToolCallsFromPayload(payload)

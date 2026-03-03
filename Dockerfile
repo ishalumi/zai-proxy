@@ -14,6 +14,6 @@ WORKDIR /app
 
 COPY --from=builder /app/zai-proxy .
 
-EXPOSE 8000
+EXPOSE 7990
 
 CMD ["./zai-proxy"]

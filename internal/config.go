@@ -18,7 +18,7 @@ func LoadConfig() {
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8000"
+		port = "7990"
 	}
 
 	Cfg = &Config{

@@ -3,12 +3,7 @@ services:
     image: ghcr.io/ishalumi/zai-proxy:latest
     container_name: zai-proxy
     restart: unless-stopped
-    environment:
-      - PORT=8001
-      - LOG_LEVEL=info
-    networks:
-      - 1panel-network
-
-networks:
-  1panel-network:
-    external: true
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:${PORT:-7990}:${PORT:-7990}"
